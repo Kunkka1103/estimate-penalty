@@ -1,0 +1,106 @@
+package estimate
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"github.com/filecoin-project/go-address"
+	"github.com/filecoin-project/go-bitfield"
+	"github.com/filecoin-project/go-jsonrpc"
+	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/builtin"
+	"github.com/filecoin-project/lotus/api/client"
+	"github.com/filecoin-project/lotus/api/v0api"
+	"github.com/filecoin-project/lotus/chain/actors"
+	"github.com/filecoin-project/lotus/chain/types"
+	miner2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
+	"log"
+	"net/http"
+)
+
+var lotusAPI = flag.String("l", "http://112.124.1.253:1234/rpc/v0", "lotusAPI")
+
+func ConnectClient(apiUrl string) (v0api.FullNode, jsonrpc.ClientCloser, error) {
+	header := http.Header{}
+	ctx := context.Background()
+	return client.NewFullNodeRPCV0(ctx, apiUrl, header)
+}
+
+func main() {
+
+	flag.Parse()
+
+	//init lotus connect
+	delegate, closer, err := ConnectClient(*lotusAPI)
+	if err != nil {
+		log.Fatalf("connect to lotusAPI failed,err:%s", err)
+	}
+	defer closer()
+
+	//gen ctx
+	ctx := context.Background()
+
+	miner, err := address.NewFromString("f0709366")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	mi, err := delegate.StateMinerInfo(ctx, miner, types.EmptyTSK)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sectorNum := uint64(932880)
+	sectorbit := bitfield.New()
+	sectorbit.Set(sectorNum)
+
+	loca, err := delegate.StateSectorPartition(ctx, miner, abi.SectorNumber(sectorNum), types.EmptyTSK)
+	if err != nil {
+		log.Fatalf("get state sector partition %s", err)
+	}
+
+	para := miner2.TerminationDeclaration{
+		Deadline:  loca.Deadline,
+		Partition: loca.Partition,
+		Sectors:   sectorbit,
+	}
+	terminationDeclarationParams := []miner2.TerminationDeclaration{}
+	terminationDeclarationParams = append(terminationDeclarationParams, para)
+
+	terminateSectorParams := &miner2.TerminateSectorsParams{
+		Terminations: terminationDeclarationParams,
+	}
+
+	sp, err := actors.SerializeParams(terminateSectorParams)
+	if err != nil {
+		log.Fatal("serializing params: %w", err)
+	}
+
+	msg := &types.Message{
+		From:   mi.Owner,
+		To:     miner,
+		Method: builtin.MethodsMiner.TerminateSectors,
+
+		Value:  big.Zero(),
+		Params: sp,
+	}
+
+	in, err := delegate.StateCall(ctx, msg, types.EmptyTSK)
+	if err != nil {
+		log.Printf("statecall get failed,err:%s", err)
+	}
+
+	fmt.Println("=====================")
+	findPenaltyInInternalExecutions("\t", in.ExecutionTrace.Subcalls)
+
+}
+
+func findPenaltyInInternalExecutions(prefix string, trace []types.ExecutionTrace) {
+	for _, im := range trace {
+		if im.Msg.To.String() == "f099" /*Burn actor*/ {
+			fmt.Printf("Estimated termination penalty: %s attoFIL\n", im.Msg.Value)
+			return
+		}
+		findPenaltyInInternalExecutions(prefix+"\t", im.Subcalls)
+	}
+}
