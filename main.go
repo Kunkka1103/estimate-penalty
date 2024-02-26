@@ -17,9 +17,9 @@ import (
 	"sync"
 )
 
-var miner = flag.String("m", "f0709366", "miner")
+var miner = flag.String("m", "", "miner")
 var sectorFile = flag.String("f", "", "sectors file")
-var lotusAPI = flag.String("l", "http://112.124.1.253:1234/rpc/v0", "lotusAPI")
+var lotusAPI = flag.String("l", "http://127.0.0.1:1234/rpc/v0", "lotusAPI")
 var concurrentLimit = flag.Int("c", 100, "最大并发数")
 
 func main() {
