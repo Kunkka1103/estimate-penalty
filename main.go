@@ -4,6 +4,7 @@ import (
 	"context"
 	"estimate-penalty/estimate"
 	"estimate-penalty/get"
+	"estimate-penalty/sqlexec"
 	"flag"
 	"fmt"
 	"github.com/filecoin-project/go-address"
@@ -18,6 +19,7 @@ import (
 )
 
 var miner = flag.String("m", "", "miner")
+var clusterName = flag.String("n", "", "cluster name,example:xc64,hk01")
 var sectorFile = flag.String("f", "", "sectors file")
 var lotusAPI = flag.String("l", "http://127.0.0.1:1234/rpc/v0", "lotusAPI")
 var concurrentLimit = flag.Int("c", 100, "最大并发数")
@@ -27,15 +29,45 @@ func main() {
 	flag.Parse()
 
 	// 检查命令行参数
-	if *miner == "" {
-		fmt.Println("Miner address is required")
+	if (*miner != "" && *clusterName != "") || (*miner == "" && *clusterName == "") {
+		fmt.Println("Error: Please provide either Miner or Cluster, but not both or neither.")
 		return
 	}
 
-	addr, err := address.NewFromString(*miner)
-	if err != nil {
-		fmt.Println("Address transfer failed, please check the miner number")
-		return
+	//addr, err := address.NewFromString(*miner)
+	//if err != nil {
+	//	fmt.Println("Address transfer failed, please check the miner number")
+	//	return
+	//}
+
+	var addr address.Address
+	var err error
+	if *miner != "" {
+		fmt.Println("检测到你本次使用的是矿工号，推荐使用集群代号查询，可通过-h 查询使用帮助")
+		addr, err = address.NewFromString(*miner)
+		if err != nil {
+			log.Fatalf("convert miner to addr failed,err:%s", err)
+		}
+	} else {
+
+		dsn, err := sqlexec.ReadDSN()
+		if err != nil {
+			log.Fatalln(err)
+		}
+		db, err := sqlexec.InitDB(dsn)
+		if err != nil {
+			log.Fatalf("connect to ops db failed,err:%s", err)
+		}
+
+		m, err := sqlexec.GetMiner(db, *clusterName)
+		if err != nil {
+			log.Fatalf("Failed to query miner, please confirm whether the cluster is correct")
+		}
+		addr, err = address.NewFromString(m)
+		if err != nil {
+			log.Fatalf("convert miner to addr failed,err:%s", err)
+		}
+		fmt.Printf("cluster: %s,miner: %s,正在查询中，请稍等...\n", *clusterName, m)
 	}
 
 	ctx := context.Background()
