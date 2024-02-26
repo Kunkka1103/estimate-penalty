@@ -1,21 +1,24 @@
-package openfile
+package get
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"github.com/filecoin-project/go-address"
+	"github.com/filecoin-project/lotus/api/v0api"
+	"github.com/filecoin-project/lotus/chain/types"
 	"os"
 	"strconv"
 	"strings"
 )
 
-func ReadSectors(sectorFile string) ([]uint64, error) {
+func FromText(sectorFile string) (sectors []uint64, err error) {
 	file, err := os.Open(sectorFile)
 	if err != nil {
 		return nil, fmt.Errorf("error opening file: %w", err)
 	}
 	defer file.Close()
 
-	var sectors []uint64
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -35,4 +38,20 @@ func ReadSectors(sectorFile string) ([]uint64, error) {
 	}
 
 	return sectors, nil
+}
+
+func FromChain(ctx context.Context, delegate v0api.FullNode, addr address.Address) (sectors []uint64, err error) {
+
+	sectorsOnChain, err := delegate.StateMinerActiveSectors(ctx, addr, types.EmptyTSK)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, sector := range sectorsOnChain {
+		s := uint64(sector.SectorNumber)
+		sectors = append(sectors, s)
+	}
+
+	return sectors, nil
+
 }

@@ -3,35 +3,67 @@ package main
 import (
 	"context"
 	"estimate-penalty/estimate"
-	"estimate-penalty/openfile"
+	"estimate-penalty/get"
 	"flag"
 	"fmt"
+	"github.com/filecoin-project/go-address"
+	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/lotus/api/client"
+	"github.com/filecoin-project/lotus/api/v0api"
 	"golang.org/x/sync/semaphore"
 	"log"
+	"net/http"
 	"sync"
 )
 
-var miner = flag.String("miner", "", "miner")
-var sectorFile = flag.String("sectors", "", "sectors file")
-var lotusAPI = flag.String("l", "http://127.0.0.1:1234/rpc/v0", "lotusAPI")
-var concurrentLimit = flag.Int("concurrency", 100, "The maximum number of concurrent TerminateSector operations")
+var miner = flag.String("m", "f0709366", "miner")
+var sectorFile = flag.String("f", "", "sectors file")
+var lotusAPI = flag.String("l", "http://112.124.1.253:1234/rpc/v0", "lotusAPI")
+var concurrentLimit = flag.Int("c", 100, "最大并发数")
 
 func main() {
 
 	flag.Parse()
 
 	// 检查命令行参数
-	if *miner == "" || *sectorFile == "" {
-		fmt.Println("Miner address and sectors file are required")
+	if *miner == "" {
+		fmt.Println("Miner address is required")
 		return
 	}
 
-	// 检查扫描过程中是否有错误发生
-	sectors, err := openfile.ReadSectors(*sectorFile)
+	addr, err := address.NewFromString(*miner)
 	if err != nil {
-		fmt.Printf("Failed to read file: %v\n", err)
+		fmt.Println("Address transfer failed, please check the miner number")
 		return
+	}
+
+	ctx := context.Background()
+
+	delegate, closer, err := ConnectClient(*lotusAPI)
+	if err != nil {
+		fmt.Printf("connect to lotusAPI failed, err: %s", err)
+		return
+	}
+	defer closer()
+
+	var sectors []uint64
+	if *sectorFile == "" {
+		fmt.Println("未检测到sectorFile，将计算该集群所有sector")
+
+		sectors, err = get.FromChain(ctx, delegate, addr)
+		if err != nil {
+			fmt.Printf("Failed to get sector info: %v\n", err)
+			return
+		}
+	} else {
+		fmt.Println("正在读取文本")
+
+		sectors, err = get.FromText(*sectorFile)
+		if err != nil {
+			fmt.Printf("Failed to read file: %v\n", err)
+			return
+		}
 	}
 
 	// 打印slice 长度
@@ -40,8 +72,7 @@ func main() {
 	penaltySum := big.Zero()
 	var mu sync.Mutex // 用于保护penaltySum
 
-	sem := semaphore.NewWeighted(int64(*concurrentLimit)) // 最大并发数为10
-	ctx := context.Background()
+	sem := semaphore.NewWeighted(int64(*concurrentLimit))
 
 	for _, sector := range sectors {
 		wg.Add(1)
@@ -57,7 +88,7 @@ func main() {
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
 
-			penalty, err := estimate.TerminateSector(ctx, *lotusAPI, *miner, sector)
+			penalty, err := estimate.TerminateSector(ctx, delegate, addr, sector)
 			if err != nil {
 				fmt.Printf("Error terminating sector %d: %v\n", sector, err)
 				return
@@ -71,4 +102,10 @@ func main() {
 	wg.Wait()
 
 	fmt.Printf("Total estimated penalty: %s attoFIL\n", penaltySum)
+}
+
+func ConnectClient(apiUrl string) (v0api.FullNode, jsonrpc.ClientCloser, error) {
+	header := http.Header{}
+	ctx := context.Background()
+	return client.NewFullNodeRPCV0(ctx, apiUrl, header)
 }

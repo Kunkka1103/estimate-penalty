@@ -380,4 +380,4 @@ circleci:
 
 build-check:  $(BUILD_DEPS)
 	rm -rf ./estimate-penalty
-	go build $(GOFLAGS) -o estimate-penalty ./estimate-penalty.go
+	go build $(GOFLAGS) -o estimate-penalty ./main.go
